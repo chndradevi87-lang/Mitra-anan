@@ -8,7 +8,7 @@ import { Gesture, EventType as TouchEventType } from '../../../../base/browser/t
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
-import { autorun, IObservable } from '../../../../base/common/observable.js';
+import { autorun, derived, IObservable } from '../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
@@ -42,7 +42,7 @@ export interface IPermissionPickerDelegate {
 	 * omitted, the picker manages its own internal state and starts at
 	 * {@link ChatPermissionLevel.Default}.
 	 */
-	readonly currentPermissionLevel?: IObservable<ChatPermissionLevel>;
+	readonly currentPermissionLevel?: IObservable<ChatPermissionLevel | undefined>;
 
 	/**
 	 * If provided, the picker hides itself when this is `false`. Used by
@@ -121,7 +121,11 @@ export class PermissionPicker extends Disposable {
 		const currentPermissionLevel = this._delegate.currentPermissionLevel;
 		if (currentPermissionLevel) {
 			this._renderDisposables.add(autorun(reader => {
-				this._currentLevel = currentPermissionLevel.read(reader);
+				const level = currentPermissionLevel.read(reader);
+				if (level === undefined) {
+					return;
+				}
+				this._currentLevel = level;
 				this._updateTriggerLabel(trigger);
 			}));
 		}
@@ -283,19 +287,33 @@ export class PermissionPicker extends Disposable {
 
 /**
  * Default-Copilot {@link IPermissionPickerDelegate}: writes the user's chosen
- * level back to the active {@link CopilotChatSessionsProvider} session.
- *
- * Does not provide `currentPermissionLevel` or `isApplicable`, so the picker
- * manages its own state and is always visible (visibility is gated at the menu
- * contribution level via `when` clauses).
+ * level back to the active {@link CopilotChatSessionsProvider} session, and
+ * exposes that session's `permissionLevel` observable so the picker's
+ * trigger label tracks the session's current level rather than resetting to
+ * the configured default on every re-render.
  */
 export class CopilotPermissionPickerDelegate extends Disposable implements IPermissionPickerDelegate {
+
+	readonly currentPermissionLevel: IObservable<ChatPermissionLevel | undefined>;
+
 	constructor(
 		@ISessionsManagementService private readonly _sessionsManagementService: ISessionsManagementService,
 		@ISessionsProvidersService private readonly _sessionsProvidersService: ISessionsProvidersService,
 		@IChatSessionsService private readonly _chatSessionsService: IChatSessionsService,
 	) {
 		super();
+
+		this.currentPermissionLevel = derived(this, reader => {
+			const session = this._sessionsManagementService.activeSession.read(reader);
+			if (!session) {
+				return undefined;
+			}
+			const provider = this._sessionsProvidersService.getProvider(session.providerId);
+			if (!(provider instanceof CopilotChatSessionsProvider)) {
+				return undefined;
+			}
+			return provider.getSession(session.sessionId)?.permissionLevel.read(reader);
+		});
 	}
 
 	setPermissionLevel(level: ChatPermissionLevel): void {
