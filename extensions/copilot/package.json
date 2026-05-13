@@ -6381,7 +6381,7 @@
 				"order": 1,
 				"canDelegate": true,
 				"description": "%github.copilot.session.providerDescription.background%",
-				"when": "config.github.copilot.chat.backgroundAgent.enabled",
+				"when": "config.github.copilot.chat.backgroundAgent.enabled && github.copilot.chat.agentSessionsAvailable",
 				"capabilities": {
 					"supportsFileAttachments": true,
 					"supportsProblemAttachments": true,
@@ -6438,7 +6438,7 @@
 				"order": 2,
 				"canDelegate": true,
 				"description": "%github.copilot.session.providerDescription.cloud%",
-				"when": "config.github.copilot.chat.cloudAgent.enabled",
+				"when": "config.github.copilot.chat.cloudAgent.enabled && github.copilot.chat.agentSessionsAvailable",
 				"capabilities": {
 					"supportsFileAttachments": true
 				},
