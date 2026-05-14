@@ -537,8 +537,12 @@ suite('RunInTerminalTool', () => {
 			output: '/bin/bash: /workspace/out.txt: Operation not permitted',
 		};
 
-		test('should retry completed foreground sandbox commands when output indicates sandbox block', () => {
+		test('should retry completed foreground sandbox commands regardless of output text', () => {
 			strictEqual(shouldAutomaticallyRetryUnsandboxed(baseRetryOptions), true);
+			strictEqual(shouldAutomaticallyRetryUnsandboxed({
+				...baseRetryOptions,
+				output: 'regular command failure',
+			}), true);
 		});
 
 		test('should not retry when unsandboxed commands are disabled', () => {
@@ -555,7 +559,7 @@ suite('RunInTerminalTool', () => {
 			}), false);
 		});
 
-		test('should not retry background, timed-out, successful, or non-sandbox-blocked results', () => {
+		test('should not retry background, timed-out, or successful results', () => {
 			strictEqual(shouldAutomaticallyRetryUnsandboxed({
 				...baseRetryOptions,
 				isBackgroundExecution: true,
@@ -567,10 +571,6 @@ suite('RunInTerminalTool', () => {
 			strictEqual(shouldAutomaticallyRetryUnsandboxed({
 				...baseRetryOptions,
 				exitCode: 0,
-			}), false);
-			strictEqual(shouldAutomaticallyRetryUnsandboxed({
-				...baseRetryOptions,
-				output: 'regular command failure',
 			}), false);
 		});
 
