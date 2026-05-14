@@ -818,6 +818,7 @@ export class TerminalSandboxService extends Disposable implements ITerminalSandb
 		return this._getSettingValue<boolean>(AgentSandboxSettingId.AgentSandboxAllowUnsandboxedCommands) === true;
 	}
 
+	// for getting settings from the active and deprecated . This is for testing only.
 	private _getSettingValue<T>(settingId: TerminalChatAgentToolsSettingId | AgentNetworkDomainSettingId | AgentSandboxSettingId, ...deprecatedSettingIds: (TerminalChatAgentToolsSettingId | AgentNetworkDomainSettingId | AgentSandboxSettingId)[]): T | undefined {
 		const setting = this._configurationService.inspect<T>(settingId);
 		if (setting.userValue !== undefined) {
