@@ -107,8 +107,10 @@ import { ChatEditingShowChangesAction, ViewPreviousEditsAction } from '../../cha
 import { resizeImage } from '../../chatImageUtils.js';
 import { ChatSessionPickerActionItem, IChatSessionPickerDelegate } from '../../chatSessions/chatSessionPickerActionItem.js';
 import { AgentHostChatInputPicker, AgentHostChatInputPickerActionViewItem } from '../../agentSessions/agentHost/agentHostChatInputPicker.js';
-import { OpenAgentHostBranchPickerAction, OpenAgentHostIsolationPickerAction, OpenAgentHostModePickerAction } from '../../agentSessions/agentHost/agentHostChatInputPicker.contribution.js';
+import { OpenAgentHostAutoApprovePickerAction, OpenAgentHostBranchPickerAction, OpenAgentHostIsolationPickerAction, OpenAgentHostModePickerAction, OpenAgentHostPermissionModePickerAction } from '../../agentSessions/agentHost/agentHostChatInputPicker.contribution.js';
+import { AgentHostGenericConfigChips } from '../../agentSessions/agentHost/agentHostGenericConfigChips.js';
 import { SessionConfigKey } from '../../../../../../platform/agentHost/common/sessionConfigKeys.js';
+import { ClaudeSessionConfigKey } from '../../../../../../platform/agentHost/common/claudeSessionConfigKeys.js';
 import { IChatPhoneInputPresenter, MobileChatInputCombinedPickerActionItem } from './chatPhoneInputPresenter.js';
 import { IChatContextService } from '../../contextContrib/chatContextService.js';
 import { IDisposableReference } from '../chatContentParts/chatCollections.js';
@@ -828,6 +830,27 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		}
 	}
 
+	public switchToNextPinnedModel(): void {
+		const models = this.getModels();
+		if (models.length === 0) {
+			return;
+		}
+
+		const modelMap = new Map(models.map(model => [model.identifier, model]));
+		const pinnedModels = this.languageModelsService
+			.getPinnedModelIds()
+			.map(modelId => modelMap.get(modelId))
+			.filter(isDefined);
+
+		if (pinnedModels.length === 0) {
+			return;
+		}
+
+		const currentIndex = pinnedModels.findIndex(model => model.identifier === this._currentLanguageModel.get()?.identifier);
+		const nextIndex = (currentIndex + 1) % pinnedModels.length;
+		this.setCurrentLanguageModel(pinnedModels[nextIndex]);
+	}
+
 	public openModelPicker(): void {
 		if (this.chatPhoneInputPresenter.enabled.get()) {
 			this._showCombinedPhonePickerSheet();
@@ -1102,7 +1125,7 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 			// Sync selected model - validate it belongs to the current session's model pool
 			if (state?.selectedModel) {
 				const allModels = this.getAllMergedModels();
-				const sessionType = this.getCurrentSessionType() ?? getChatSessionType(forSessionResource);
+				const sessionType = getChatSessionType(forSessionResource);
 				const syncResult = resolveModelFromSyncState(state.selectedModel, this._currentLanguageModel.get(), allModels, sessionType, {
 					location: this.location,
 					currentModeKind: this.currentModeKind,
@@ -2563,9 +2586,24 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		// Secondary toolbar (permissions) — below the input box
 		const agentHostShortPickerIds = new Set<string>([
 			OpenAgentHostModePickerAction.ID,
+			OpenAgentHostAutoApprovePickerAction.ID,
+			OpenAgentHostPermissionModePickerAction.ID,
 			OpenAgentHostBranchPickerAction.ID,
 			OpenAgentHostIsolationPickerAction.ID,
 		]);
+		// Direct-rendered chip lane for agent-host config properties that
+		// are advertised by the agent's schema but not handled by a
+		// dedicated `MenuId.ChatInputSecondary` action. Sits as a sibling
+		// of the secondary toolbar so the toolbar can take the available
+		// space (`flex: 1 1 0`) while the chips pin to the right next to
+		// the context-usage widget.
+		const genericChipsContainer = dom.$('.chat-secondary-generic-chips');
+		const genericChipsLane = this._register(this.instantiationService.createInstance(
+			AgentHostGenericConfigChips,
+			widget,
+			secondaryPickerOptions,
+		));
+		genericChipsLane.render(genericChipsContainer);
 		this.secondaryToolbar = this._register(this.instantiationService.createInstance(MenuWorkbenchToolBar, this.secondaryToolbarContainer, MenuId.ChatInputSecondary, {
 			telemetrySource: this.options.menus.telemetrySource,
 			menuOptions: { shouldForwardArgs: true },
@@ -2660,15 +2698,24 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 					return widget;
 				} else if (
 					(action.id === OpenAgentHostModePickerAction.ID
+						|| action.id === OpenAgentHostAutoApprovePickerAction.ID
+						|| action.id === OpenAgentHostPermissionModePickerAction.ID
 						|| action.id === OpenAgentHostBranchPickerAction.ID
 						|| action.id === OpenAgentHostIsolationPickerAction.ID)
 					&& action instanceof MenuItemAction
 				) {
+					if (this.options.isSessionsWindow) {
+						return new HiddenActionViewItem(action);
+					}
 					const property = action.id === OpenAgentHostBranchPickerAction.ID
 						? SessionConfigKey.Branch
 						: action.id === OpenAgentHostIsolationPickerAction.ID
 							? SessionConfigKey.Isolation
-							: SessionConfigKey.Mode;
+							: action.id === OpenAgentHostAutoApprovePickerAction.ID
+								? SessionConfigKey.AutoApprove
+								: action.id === OpenAgentHostPermissionModePickerAction.ID
+									? ClaudeSessionConfigKey.PermissionMode
+									: SessionConfigKey.Mode;
 					const picker = this.instantiationService.createInstance(AgentHostChatInputPicker, widget, property, secondaryPickerOptions);
 					return new AgentHostChatInputPickerActionViewItem(action, picker);
 				} else if (action.id === ChatSessionPrimaryPickerAction.ID && action instanceof MenuItemAction) {
@@ -2685,6 +2732,7 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		}));
 		this.secondaryToolbar.getElement().classList.add('chat-secondary-input-toolbar');
 		this.secondaryToolbar.context = { widget } satisfies IChatExecuteActionContext;
+		dom.append(this.secondaryToolbarContainer, genericChipsContainer);
 		this._register(this.secondaryToolbar.onDidChangeMenuItems(() => {
 			// Update container reference for the pickers when the secondary toolbar hosts one.
 			// Only assign when found so we don't overwrite a valid primary container reference
@@ -2749,8 +2797,18 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 
 		this.renderAttachedContext();
 
+		// Defer only the carousel max-height update to the next animation
+		// frame. That write changes a descendant whose height flexes back
+		// up into `this.container` (the observed element), which is what
+		// trips the browser's "ResizeObserver loop completed with
+		// undelivered notifications" warning under bursty input (see
+		// #316509). Publishing `this.height` stays synchronous because its
+		// autorun consumers re-layout siblings/ancestors of the input
+		// container, not the container itself, so they do not feed back
+		// into the same observation phase.
+		const updateCarouselMaxHeightScheduler = this._register(new dom.AnimationFrameScheduler(this.container, () => this.updateToolConfirmationCarouselMaxHeight()));
 		const inputResizeObserver = this._register(new dom.DisposableResizeObserver('ChatInputPart.containerHeight', () => {
-			this.updateToolConfirmationCarouselMaxHeight();
+			updateCarouselMaxHeightScheduler.schedule();
 			const newHeight = this.container.offsetHeight;
 			this.height.set(newHeight, undefined);
 		}));
