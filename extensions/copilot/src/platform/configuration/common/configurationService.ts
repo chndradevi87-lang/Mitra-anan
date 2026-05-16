@@ -748,6 +748,10 @@ export namespace ConfigKey {
 			migrateSetting(newKey, oldKey);
 			return defineSetting<xtabPromptOptions.ModelConfiguration | null>(newKey, ConfigType.Simple, null, xtabPromptOptions.MODEL_CONFIGURATION_VALIDATOR, { oldKey });
 		})();
+
+		// Gates the Anthropic native memory tool (memory_20250818) in BYOK sessions.
+		// Does not affect local memory (plan mode, session/repo/user memory).
+		export const MemoryEnabled = defineSetting<boolean>('chat.memory.enabled', ConfigType.Simple, false);
 	}
 
 	/**
