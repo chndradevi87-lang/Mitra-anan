@@ -1097,6 +1097,7 @@
 		"--vscode-cornerRadius-small",
 		"--vscode-cornerRadius-xLarge",
 		"--vscode-cornerRadius-xSmall",
-		"--vscode-strokeThickness"
+		"--vscode-strokeThickness",
+		"--tab-group-color"
 	]
 }
