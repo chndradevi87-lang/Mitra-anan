@@ -2690,11 +2690,11 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 					};
 					const widget = this.instantiationService.createInstance(PermissionPickerActionItem, action, delegate, secondaryPickerOptions);
 					this.permissionWidget = widget;
-					this._register(widget.onDidDispose(() => {
+					Event.once(widget.onDidDispose)(() => {
 						if (this.permissionWidget === widget) {
 							this.permissionWidget = undefined;
 						}
-					}));
+					});
 					return widget;
 				} else if (
 					(action.id === OpenAgentHostModePickerAction.ID
