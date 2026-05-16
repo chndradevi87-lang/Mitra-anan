@@ -94,7 +94,7 @@ export class BrowserView extends Disposable {
 	) {
 		super();
 
-		const webPreferences: Electron.WebPreferences & { type: ReturnType<Electron.WebContents['getType']> } = {
+		const webPreferences: Electron.WebPreferences = {
 			...options?.webPreferences,
 
 			nodeIntegration: false,
@@ -108,8 +108,7 @@ export class BrowserView extends Disposable {
 			webviewTag: false,
 			session: this.session.electronSession,
 
-			// TODO@kycutler: Remove this once https://github.com/electron/electron/issues/42578 is fixed
-			type: 'browserView'
+			focusOnNavigation: false
 		};
 
 		this._view = new WebContentsView({
@@ -538,8 +537,10 @@ export class BrowserView extends Disposable {
 	/**
 	 * Load a URL in this view
 	 */
-	async loadURL(url: string): Promise<void> {
-		await this._view.webContents.loadURL(url);
+	loadURL(url: string): Promise<void> {
+		const p = this._view.webContents.loadURL(url);
+		p.catch(() => { });
+		return p;
 	}
 
 	/**
