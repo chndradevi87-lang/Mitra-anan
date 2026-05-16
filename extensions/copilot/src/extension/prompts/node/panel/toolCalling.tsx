@@ -517,7 +517,7 @@ export function sendInvokedToolTelemetry(instantiationService: IInstantiationSer
 			}
 		*/
 		telemetry.sendMSFTTelemetryEvent('agent.tool.responseLength', { toolName }, { tokenCount });
-	});
+	}).catch(() => { /* best-effort telemetry; parent DI tree may be disposed */ });
 }
 
 enum ToolValidationOutcome {
