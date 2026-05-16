@@ -831,10 +831,12 @@ class LocalNewSession extends Disposable implements ICopilotChatSession {
 	}
 
 	private async _resolveGitState(): Promise<void> {
-		const repoUri = this.sessionWorkspace.folders[0]?.root;
-		if (!repoUri) {
+		const folder = this.sessionWorkspace.folders[0];
+		const repoUri = folder?.root;
+		if (!repoUri || !folder.gitRepository) {
 			return;
 		}
+		const gitRepository = folder.gitRepository;
 
 		try {
 			const repo = await this.gitService.openRepository(repoUri);
@@ -854,9 +856,9 @@ class LocalNewSession extends Disposable implements ICopilotChatSession {
 				this._workspaceData.set({
 					...this.sessionWorkspace,
 					folders: [{
-						...this.sessionWorkspace.folders[0],
+						...folder,
 						gitRepository: {
-							...this.sessionWorkspace.folders[0].gitRepository!,
+							...gitRepository,
 							branchName,
 							upstreamBranchName,
 							uncommittedChanges,
