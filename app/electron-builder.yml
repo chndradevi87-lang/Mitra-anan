@@ -1,0 +1,47 @@
+appId: com.aistudio.ide
+productName: AI Studio
+copyright: Copyright © 2024 AI Studio
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - dist/**/*
+  - package.json
+
+asar: true
+compression: maximum
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.ico
+  artifactName: "${productName}-${version}-Setup.${ext}"
+  publisherName: AI Studio
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: resources/icon.png
+  category: Development
+  artifactName: "${productName}-${version}-linux.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  uninstallDisplayName: AI Studio
+
+publish:
+  provider: github
+  owner: nathakumar
+  repo: vscode
+  releaseType: release
+  # Default channel is latest (stable). For beta/nightly, use prerelease versions.
