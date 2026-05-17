@@ -82,6 +82,7 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 	private _completionsFamilyMap: Map<string, IModelAPIResponse[]> = new Map();
 	private _copilotUtilityModel: IModelAPIResponse | undefined;
 	private _lastFetchTime: number = 0;
+	private _hasForcedUtilityModelRetry: boolean = false;
 	private readonly _taskSingler = new TaskSingler<IModelAPIResponse | undefined | void>();
 	private _lastFetchError: any;
 
@@ -106,6 +107,8 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 			// Only clear the family map if the copilot token is undefined, as this means the user has logged out and we should clear the models, otherwise we want to keep the old models around until we get a new list
 			if (this._authService.copilotToken === undefined) {
 				this._familyMap.clear();
+				this._copilotUtilityModel = undefined;
+				this._hasForcedUtilityModelRetry = false;
 			}
 
 			this._completionsFamilyMap.clear();
@@ -172,6 +175,12 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 
 	public async getCopilotUtilityModel(): Promise<IChatModelInformation> {
 		await this._taskSingler.getOrCreate(ModelMetadataFetcher.ALL_MODEL_KEY, this._fetchModels.bind(this));
+		if (!this._copilotUtilityModel && this._familyMap.size > 0 && !this._hasForcedUtilityModelRetry) {
+			// One-shot retry per auth epoch: avoids storming CAPI on persistent server misconfig.
+			this._hasForcedUtilityModelRetry = true;
+			this._logService.warn('Utility model unset after initial fetch; forcing one refresh');
+			await this._taskSingler.getOrCreate(ModelMetadataFetcher.ALL_MODEL_KEY, () => this._fetchModels(true));
+		}
 		const resolvedModel = this._copilotUtilityModel;
 		if (!resolvedModel || !isChatModelInformation(resolvedModel)) {
 			throw new Error(await this._getErrorMessage('Unable to resolve Copilot utility chat model (server did not mark a chat fallback model)'));
@@ -272,6 +281,7 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 			}
 
 			this._familyMap.clear();
+			this._copilotUtilityModel = undefined;
 
 			const data: IModelAPIResponse[] = (await response.json()).data;
 			this._requestLogger.logModelListCall(requestId, requestMetadata, data);
@@ -290,11 +300,15 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 				familyMap.get(family)?.push(model);
 			}
 			this._lastFetchError = undefined;
+			if (this._copilotUtilityModel) {
+				this._hasForcedUtilityModelRetry = false;
+			}
 			this._onDidModelRefresh.fire();
 		} catch (e) {
 			this._logService.error(e, `Failed to fetch models (${requestId})`);
 			this._lastFetchError = e;
 			this._lastFetchTime = 0;
+			this._hasForcedUtilityModelRetry = false;
 		}
 	}
 
