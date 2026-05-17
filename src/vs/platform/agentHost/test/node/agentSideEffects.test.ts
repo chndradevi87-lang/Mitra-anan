@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { timeout } from '../../../../base/common/async.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { Event } from '../../../../base/common/event.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -2612,6 +2613,175 @@ suite('AgentSideEffects', () => {
 
 	// ---- Session diff computation ----------------------------------------------
 
+	test('publishSessionChangesetCatalogue adds the default ordered catalogue entries on summary.changesets', () => {
+		const sessionStr = sessionUri.toString();
+		setupSession();
+
+		// No catalogue before the eager publish.
+		assert.strictEqual(stateManager.getSessionState(sessionStr)?.summary.changesets, undefined);
+
+		sideEffects.publishSessionChangesetCatalogue(sessionStr);
+
+		const changesets = stateManager.getSessionState(sessionStr)?.summary.changesets;
+		assert.deepStrictEqual(changesets, [
+			{
+				label: 'Uncommitted Changes',
+				uriTemplate: `${sessionStr}/changeset/uncommitted`,
+			},
+			{
+				label: 'Session Changes',
+				uriTemplate: `${sessionStr}/changeset/session`,
+			},
+			{
+				label: 'This Turn',
+				uriTemplate: `${sessionStr}/changeset/turn/{turnId}`,
+			},
+		]);
+
+		// Both static changeset URIs are now registered and subscribable
+		// with `computing` snapshots so a client that subscribes before
+		// the first compute pass sees a valid state.
+		for (const id of ['uncommitted', 'session']) {
+			const snapshot = stateManager.getSnapshot(`${sessionStr}/changeset/${id}`);
+			assert.ok(snapshot, `expected ${id} changeset URI to be subscribable`);
+			assert.strictEqual((snapshot.state as { status: string }).status, 'computing');
+		}
+	});
+
+	test('publishSessionChangesetCatalogue is idempotent across repeated calls', () => {
+		const sessionStr = sessionUri.toString();
+		setupSession();
+
+		sideEffects.publishSessionChangesetCatalogue(sessionStr);
+		sideEffects.publishSessionChangesetCatalogue(sessionStr);
+		sideEffects.publishSessionChangesetCatalogue(sessionStr);
+
+		const changesets = stateManager.getSessionState(sessionStr)?.summary.changesets;
+		assert.strictEqual(changesets?.length, 3, 'expected the three default catalogue entries');
+	});
+
+	test('restoreSessionChangeset publishes the catalogue and seeds files in Ready', () => {
+		const sessionStr = sessionUri.toString();
+		setupSession();
+
+		const diffs = [
+			{
+				after: { uri: 'file:///wd/a.ts', content: { uri: 'file:///wd/a.ts' } },
+				diff: { added: 5, removed: 2 },
+			},
+			{
+				after: { uri: 'file:///wd/b.ts', content: { uri: 'file:///wd/b.ts' } },
+				diff: { added: 1, removed: 0 },
+			},
+		];
+
+		sideEffects.restoreSessionChangeset(sessionStr, diffs);
+
+		const changesetUri = `${sessionStr}/changeset/session`;
+		const snapshot = stateManager.getSnapshot(changesetUri);
+		assert.ok(snapshot, 'expected the changeset URI to be subscribable');
+		const state = snapshot.state as { status: string; files: Array<{ id: string }> };
+		assert.strictEqual(state.status, 'ready');
+		assert.deepStrictEqual(state.files.map(f => f.id), ['file:///wd/a.ts', 'file:///wd/b.ts']);
+
+		const catalogue = stateManager.getSessionState(sessionStr)?.summary.changesets;
+		assert.deepStrictEqual(catalogue, [
+			{
+				label: 'Uncommitted Changes',
+				uriTemplate: `${sessionStr}/changeset/uncommitted`,
+			},
+			{
+				label: 'Session Changes',
+				uriTemplate: changesetUri,
+				additions: 6,
+				deletions: 2,
+				files: 2,
+			},
+			{
+				label: 'This Turn',
+				uriTemplate: `${sessionStr}/changeset/turn/{turnId}`,
+			},
+		]);
+	});
+
+	test('restoreSessionChangeset catalogue counts only emitted unique files', () => {
+		const sessionStr = sessionUri.toString();
+		setupSession();
+
+		const diffs = [
+			{
+				after: { uri: 'file:///wd/a.ts', content: { uri: 'file:///wd/a.ts' } },
+				diff: { added: 100, removed: 50 },
+			},
+			{
+				diff: { added: 20, removed: 10 },
+			},
+			{
+				after: { uri: 'file:///wd/a.ts', content: { uri: 'file:///wd/a.ts' } },
+				diff: { added: 3, removed: 1 },
+			},
+			{
+				after: { uri: 'file:///wd/b.ts', content: { uri: 'file:///wd/b.ts' } },
+				diff: { added: 1, removed: 0 },
+			},
+		];
+
+		sideEffects.restoreSessionChangeset(sessionStr, diffs);
+
+		const changesetUri = `${sessionStr}/changeset/session`;
+		const snapshot = stateManager.getSnapshot(changesetUri);
+		const state = snapshot?.state as { files: Array<{ id: string; edit: { diff?: { added?: number; removed?: number } } }> } | undefined;
+		const catalogue = stateManager.getSessionState(sessionStr)?.summary.changesets;
+		assert.deepStrictEqual({
+			files: state?.files.map(f => ({ id: f.id, diff: f.edit.diff })),
+			catalogue,
+		}, {
+			files: [
+				{ id: 'file:///wd/a.ts', diff: { added: 3, removed: 1 } },
+				{ id: 'file:///wd/b.ts', diff: { added: 1, removed: 0 } },
+			],
+			catalogue: [
+				{
+					label: 'Uncommitted Changes',
+					uriTemplate: `${sessionStr}/changeset/uncommitted`,
+				},
+				{
+					label: 'Session Changes',
+					uriTemplate: changesetUri,
+					additions: 4,
+					deletions: 1,
+					files: 2,
+				},
+				{
+					label: 'This Turn',
+					uriTemplate: `${sessionStr}/changeset/turn/{turnId}`,
+				},
+			],
+		});
+	});
+
+	test('restoreSessionChangeset works without a live session state (seeds the changeset for unopened sessions)', () => {
+		const sessionStr = sessionUri.toString();
+		// Note: setupSession is intentionally NOT called.
+
+		const diffs = [
+			{
+				after: { uri: 'file:///wd/a.ts', content: { uri: 'file:///wd/a.ts' } },
+				diff: { added: 1, removed: 0 },
+			},
+		];
+		sideEffects.restoreSessionChangeset(sessionStr, diffs);
+
+		// Session state still doesn't exist — only the changeset
+		// state is registered so a client subscription resolves.
+		assert.strictEqual(stateManager.getSessionState(sessionStr), undefined);
+		const snapshot = stateManager.getSnapshot(`${sessionStr}/changeset/session`);
+		assert.ok(snapshot, 'expected the changeset URI to be subscribable even without a session state');
+		const state = snapshot.state as { status: string; files: Array<{ id: string }> };
+		assert.strictEqual(state.status, 'ready');
+		assert.deepStrictEqual(state.files.map(f => f.id), ['file:///wd/a.ts']);
+	});
+
 	suite('session diff computation', () => {
 
 		test('git-driven path is preferred when a git service is provided and the working dir is a git work tree', async () => {
@@ -2658,7 +2828,7 @@ suite('AgentSideEffects', () => {
 			const diffsEmitted = new Promise<void>(r => { resolveDiffs = r; });
 			disposables.add(localStateManager.onDidEmitEnvelope(e => {
 				envelopes.push(e);
-				if (e.action.type === ActionType.SessionDiffsChanged) {
+				if (e.action.type === ActionType.ChangesetFileSet || e.action.type === ActionType.ChangesetStatusChanged) {
 					resolveDiffs?.();
 				}
 			}));
@@ -2675,14 +2845,43 @@ suite('AgentSideEffects', () => {
 				action: { type: ActionType.SessionTurnComplete, session: sessionUri.toString(), turnId: 'turn-1' },
 			});
 
-			// Wait deterministically for the SessionDiffsChanged envelope rather
-			// than sleeping a fixed amount.
+			// Wait deterministically for at least one changeset envelope to land
+			// (status transition or first file upsert) rather than sleeping a
+			// fixed amount.
 			await diffsEmitted;
 
-			assert.deepStrictEqual(computeCalls, [{ workingDirectory: 'file:///wd', sessionUri: sessionUri.toString(), baseBranch: 'main' }]);
-			const diffsAction = envelopes.map(e => e.action).find(a => a.type === ActionType.SessionDiffsChanged);
-			assert.ok(diffsAction, 'expected a SessionDiffsChanged action');
-			assert.deepStrictEqual((diffsAction as { diffs: unknown }).diffs, gitDiffs);
+			// Turn-complete recomputes both the uncommitted (no
+			// `baseBranch`) and the session-wide (with `baseBranch`)
+			// changesets in parallel; assert both ran with the right
+			// options regardless of order.
+			const sortedCalls = [...computeCalls].sort((a, b) =>
+				(a.baseBranch ?? '') < (b.baseBranch ?? '') ? -1 : 1);
+			assert.deepStrictEqual(sortedCalls, [
+				{ workingDirectory: 'file:///wd', sessionUri: sessionUri.toString(), baseBranch: undefined },
+				{ workingDirectory: 'file:///wd', sessionUri: sessionUri.toString(), baseBranch: 'main' },
+			]);
+			// Each git diff lands as its own `changeset/fileSet` envelope.
+			// Walk the captured stream and reconstruct the per-changeset
+			// file lists to assert each matches the git service output.
+			const fileSets = envelopes
+				.map(e => e.action)
+				.filter(a => a.type === ActionType.ChangesetFileSet) as Array<{ changeset: string; file: { edit: unknown } }>;
+			const sessionFileSets = fileSets.filter(a => a.changeset === `${sessionUri.toString()}/changeset/session`);
+			const uncommittedFileSets = fileSets.filter(a => a.changeset === `${sessionUri.toString()}/changeset/uncommitted`);
+			assert.deepStrictEqual(sessionFileSets.map(a => a.file.edit), gitDiffs);
+			assert.deepStrictEqual(uncommittedFileSets.map(a => a.file.edit), gitDiffs);
+
+			// The compute pass also persists the file list under the
+			// legacy `'diffs'` slot so it survives restarts. The write
+			// is fire-and-forget through the metadata sequencer; poll
+			// briefly until it lands.
+			let persisted: string | undefined;
+			for (let i = 0; i < 50 && !persisted; i++) {
+				await timeout(2);
+				persisted = await sessionDb.getMetadata('diffs');
+			}
+			assert.ok(persisted, 'expected the compute pass to persist diffs to the session DB');
+			assert.deepStrictEqual(JSON.parse(persisted), gitDiffs);
 		});
 
 		test('falls back to the edit-tracker aggregator when the git service returns undefined', async () => {
@@ -2720,7 +2919,7 @@ suite('AgentSideEffects', () => {
 			const diffsEmitted = new Promise<void>(r => { resolveDiffs = r; });
 			disposables.add(localStateManager.onDidEmitEnvelope(e => {
 				envelopes.push(e);
-				if (e.action.type === ActionType.SessionDiffsChanged) {
+				if (e.action.type === ActionType.ChangesetStatusChanged) {
 					resolveDiffs?.();
 				}
 			}));
@@ -2738,12 +2937,98 @@ suite('AgentSideEffects', () => {
 
 			await diffsEmitted;
 
-			// With no recorded edits, the edit-tracker aggregator returns an empty array — the
-			// important assertion is that we still produced a SessionDiffsChanged envelope, which
-			// proves the fallback path executed without throwing.
-			const diffsAction = envelopes.map(e => e.action).find(a => a.type === ActionType.SessionDiffsChanged);
-			assert.ok(diffsAction, 'expected a SessionDiffsChanged action from the fallback path');
-			assert.deepStrictEqual((diffsAction as { diffs: unknown[] }).diffs, []);
+			// With no recorded edits, the edit-tracker aggregator returns an
+			// empty array — no `changeset/fileSet` envelopes are emitted. The
+			// important assertion is that we still ran the producer through
+			// to a `changeset/statusChanged → ready` envelope, which proves
+			// the fallback path executed without throwing.
+			const fileSets = envelopes
+				.map(e => e.action)
+				.filter(a => a.type === ActionType.ChangesetFileSet);
+			assert.deepStrictEqual(fileSets, []);
+			const statusAction = envelopes
+				.map(e => e.action)
+				.find(a => a.type === ActionType.ChangesetStatusChanged);
+			assert.ok(statusAction, 'expected a changeset/statusChanged envelope from the fallback path');
+		});
+
+		test('uncommitted compute does NOT fall back to edit-tracker and preserves restored snapshot when git is unavailable', async () => {
+			// Regression: previously, when the git path returned undefined
+			// (e.g. session restored before its working directory was known),
+			// the uncommitted slot would fall through to the edit-tracker
+			// aggregator. The aggregator answers a different question
+			// (SDK-tracked tool edits, not `git status`) and silently
+			// overwrote the legitimate persisted snapshot. The fix gates
+			// the fallback on `kind === 'session'`, so an unavailable git
+			// path leaves the uncommitted state untouched.
+			const sessionDb = new SessionDatabase(':memory:');
+			disposables.add(toDisposable(() => sessionDb.close()));
+			const sessionDataService = createSessionDataService(sessionDb);
+			const localStateManager = disposables.add(new AgentHostStateManager(new NullLogService()));
+			const localAgent = new MockAgent();
+			disposables.add(toDisposable(() => localAgent.dispose()));
+
+			const stubGit = {
+				computeSessionFileDiffs: async () => undefined,
+			} as unknown as import('../../node/agentHostGitService.js').IAgentHostGitService;
+
+			const localSideEffects = createTestSideEffects(disposables, localStateManager, {
+				getAgent: () => localAgent,
+				agents: observableValue<readonly IAgent[]>('agents', [localAgent]),
+				sessionDataService,
+				onTurnComplete: () => { },
+			}, stubGit);
+
+			const sessionStr = sessionUri.toString();
+			localStateManager.createSession({
+				resource: sessionStr,
+				provider: 'mock',
+				title: 'Test',
+				status: SessionStatus.Idle,
+				createdAt: Date.now(),
+				modifiedAt: Date.now(),
+				workingDirectory: 'file:///wd',
+			});
+
+			// Seed a "persisted" uncommitted snapshot of 3 files into live
+			// state, mirroring what `listSessions` overlay does on startup.
+			const persistedDiffs = [
+				{ after: { uri: 'file:///wd/a.ts', content: { uri: 'file:///wd/a.ts' } }, diff: { added: 1, removed: 0 } },
+				{ after: { uri: 'file:///wd/b.ts', content: { uri: 'file:///wd/b.ts' } }, diff: { added: 1, removed: 0 } },
+				{ after: { uri: 'file:///wd/c.ts', content: { uri: 'file:///wd/c.ts' } }, diff: { added: 1, removed: 0 } },
+			];
+			localSideEffects.restoreStaticChangeset(sessionStr, 'uncommitted', persistedDiffs);
+
+			disposables.add(localSideEffects.registerProgressListener(localAgent));
+
+			const envelopes: ActionEnvelope[] = [];
+			disposables.add(localStateManager.onDidEmitEnvelope(e => { envelopes.push(e); }));
+
+			// Trigger the recompute of the uncommitted changeset.
+			localSideEffects.refreshUncommittedChangeset(sessionStr);
+
+			// Wait long enough for the sequencer to drain the uncommitted compute.
+			for (let i = 0; i < 50; i++) {
+				await timeout(2);
+			}
+
+			// 1) The persisted snapshot must still be in live state — no
+			//    `ChangesetFileRemoved` envelopes for the uncommitted URI
+			//    were emitted.
+			const uncommittedUri = `${sessionStr}/changeset/uncommitted`;
+			const removed = envelopes
+				.map(e => e.action)
+				.filter(a => a.type === ActionType.ChangesetFileRemoved && a.changeset === uncommittedUri);
+			assert.deepStrictEqual(removed, [], 'no files should be removed when the git path is unavailable');
+
+			// 2) The persisted DB blob is unchanged (compute did not overwrite it).
+			const persistedAfter = await sessionDb.getMetadata('agentHost.changeset.uncommitted');
+			assert.strictEqual(persistedAfter, undefined, 'compute must not persist anything when git is unavailable');
+
+			// 3) Live state still reports the 3 seeded files.
+			const snapshot = localStateManager.getSnapshot(uncommittedUri);
+			const state = snapshot?.state as { files: Array<{ id: string }> } | undefined;
+			assert.deepStrictEqual(state?.files.map(f => f.id).sort(), ['file:///wd/a.ts', 'file:///wd/b.ts', 'file:///wd/c.ts']);
 		});
 	});
 });

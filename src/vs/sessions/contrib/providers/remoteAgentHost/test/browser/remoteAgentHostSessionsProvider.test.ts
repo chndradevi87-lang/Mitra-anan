@@ -30,6 +30,8 @@ import { IChatSessionsService } from '../../../../../../workbench/contrib/chat/c
 import { ILanguageModelsService } from '../../../../../../workbench/contrib/chat/common/languageModels.js';
 import { ISessionChangeEvent } from '../../../../../services/sessions/common/sessionsProvider.js';
 import { SessionStatus } from '../../../../../services/sessions/common/session.js';
+import { ISessionsManagementService } from '../../../../../services/sessions/common/sessionsManagement.js';
+import { constObservable } from '../../../../../../base/common/observable.js';
 import { RemoteAgentHostSessionsProvider, type IRemoteAgentHostSessionsProviderConfig } from '../../browser/remoteAgentHostSessionsProvider.js';
 import { ILabelService } from '../../../../../../platform/label/common/label.js';
 import { ILogService, NullLogService } from '../../../../../../platform/log/common/log.js';
@@ -215,6 +217,9 @@ function createProvider(disposables: DisposableStore, connection: MockAgentConne
 	instantiationService.stub(ILogService, new NullLogService());
 	instantiationService.stub(IGitHubService, new class extends mock<IGitHubService>() {
 		override findPullRequestNumberByHeadBranch = async () => undefined;
+	}());
+	instantiationService.stub(ISessionsManagementService, new class extends mock<ISessionsManagementService>() {
+		override readonly activeSession = constObservable(undefined);
 	}());
 
 	const config: IRemoteAgentHostSessionsProviderConfig = {
