@@ -27,6 +27,7 @@ import { IGitHubInfo, ISessionWorkspace, ISessionWorkspaceBrowseAction, SESSION_
 import { toAgentHostUri } from '../../../../../platform/agentHost/common/agentHostUri.js';
 import { LOCAL_AGENT_HOST_PROVIDER_ID } from '../../../../common/agentHostSessionsProvider.js';
 import { IGitHubService } from '../../../github/browser/githubService.js';
+import { ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
 
 const LOCAL_RESOURCE_SCHEME_PREFIX = 'agent-host-';
 
@@ -60,8 +61,9 @@ export class LocalAgentHostSessionsProvider extends BaseAgentHostSessionsProvide
 		@ILogService logService: ILogService,
 		@IGitHubService gitHubService: IGitHubService,
 		@IInstantiationService instantiationService: IInstantiationService,
+		@ISessionsManagementService sessionsManagementService: ISessionsManagementService,
 	) {
-		super(chatSessionsService, chatService, chatWidgetService, languageModelsService, _configurationService, logService, gitHubService, instantiationService);
+		super(chatSessionsService, chatService, chatWidgetService, languageModelsService, _configurationService, logService, gitHubService, instantiationService, sessionsManagementService);
 
 		this.label = localize('localAgentHostLabel', "Local Agent Host");
 
